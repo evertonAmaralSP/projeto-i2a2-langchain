@@ -1,0 +1,1 @@
+# projeto-i2a2-langchain
