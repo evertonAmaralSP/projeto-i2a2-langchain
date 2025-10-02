@@ -119,7 +119,7 @@ if arquivo_carregado:
             tipo = "Dados Comuns"
 
             flash_mensagem("✅ Arquivo carregado com sucesso!", True)  
-            st.success(f"Arquivo do tipo: {tipo}")
+            st.markdown(f"## 📄 Arquivo do tipo: {tipo}")
             
             llm = ChatOpenAI(
                 model="gpt-4o",
@@ -180,17 +180,17 @@ if arquivo_carregado:
             st.markdown("---")
             st.markdown("## 🔎 Perguntas sobre os dados ou peça um 📊 gráfico com base em uma pergunta")
             
-            pergunta_sobre_dados = st.text_input("Faça uma pergunta sobre os dados (ex: 'Qual é a média do tempo de entrega?' ou 'Crie um gráfico da média de tempo de entrega por clima.')")
+            
             with st.form(key="form_pergunta", clear_on_submit=False):
                 pergunta_sobre_dados = st.text_input(
-                    "Faça sua pergunta sobre os dados:", 
+                    "Faça uma pergunta sobre os dados (ex: 'Qual é a média do tempo de entrega?' ou 'Crie um gráfico da média de tempo de entrega por clima.')",
                     placeholder="Digite sua pergunta aqui...",
                     key="input_pergunta"
                 )
                 
                 col1, col2, col3 = st.columns([1, 1, 4])
                 with col1:
-                    submit_button = st.form_submit_button("Responder pergunta", use_container_width=True)
+                    submit_button = st.form_submit_button("Enviar 📨", use_container_width=True)
 
             if submit_button:
                 if pergunta_sobre_dados.strip():  # Verifica se não está vazio
