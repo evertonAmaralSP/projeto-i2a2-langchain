@@ -8,12 +8,24 @@ from ferramentas import criar_ferramentas
 import zipfile
 import io
 import os
+import time
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 REQUIRED_COLUMNS_NOTA_FISCAL = ['CHAVE DE ACESSO', 'MODELO_x', 'SÉRIE_x', 'NÚMERO_x']
 REQUIRED_DF1_COLUMNS_NOTA_FISCAL = ['CHAVE DE ACESSO', 'MODELO', 'SÉRIE', 'NÚMERO']
 REQUIRED_COLUMNS_CREDITCARD = ['Time', 'V1', 'V28', 'Amount', 'Class']
+
+def flash_mensagem(mensagem, tipo):
+    mensagem_temp = st.empty()
+    if tipo:
+        mensagem_temp.success(mensagem)
+    else:
+        mensagem_temp.error(mensagem)
+    time.sleep(5)
+    mensagem_temp.empty()
+
+
 
 def extrair_zip_e_carregar_csvs_em_memoria(arquivo_carregado):
     """
@@ -26,9 +38,9 @@ def extrair_zip_e_carregar_csvs_em_memoria(arquivo_carregado):
         csv_files_in_zip = [name for name in zip_ref.namelist() if name.lower().endswith('.csv')]
 
         if not csv_files_in_zip:
-            st.error("❌ Nenhum arquivo CSV encontrado dentro do ZIP.")
+            flash_mensagem("❌ Nenhum arquivo CSV encontrado dentro do ZIP.", False)
         else:
-            st.success(f"✅ Encontrados {len(csv_files_in_zip)} arquivo(s) CSV no ZIP")
+            flash_mensagem(f"✅ Encontrados {len(csv_files_in_zip)} arquivo(s) CSV no ZIP", True)
                 
 
         for csv_file_name in csv_files_in_zip:
@@ -55,19 +67,26 @@ def validate_columns(dataframe, column_list):
 def carregar_arquivo_zip_to_df(arquivo_carregado):
     dfs_dict = extrair_zip_e_carregar_csvs_em_memoria(arquivo_carregado)
 
-    df1_name = list(dfs_dict.keys())[0]
-    df2_name = list(dfs_dict.keys())[1]
-    df1 = dfs_dict[df1_name]
-    df2 = dfs_dict[df2_name]
-    if not validate_columns(df1, REQUIRED_DF1_COLUMNS_NOTA_FISCAL):
-        st.error("❌ Não é um arquivo zip de Notafiscal Valido.")
-    
-    try:
-        merged_df = pd.merge(df1, df2, on='CHAVE DE ACESSO', how='inner')
-    except KeyError:
-        st.error("❌ Não é uma combinação de arquivos csv de Notafiscal Valido.")
+
+    if len(dfs_dict) == 1:
+        return dfs_dict[0]
+    elif len(dfs_dict) == 2:
+        df1_name = list(dfs_dict.keys())[0]
+        df2_name = list(dfs_dict.keys())[1]
+        df1 = dfs_dict[df1_name]
+        df2 = dfs_dict[df2_name]
+        if not validate_columns(df1, REQUIRED_DF1_COLUMNS_NOTA_FISCAL):
+            st.error("❌ Não é um arquivo zip de Notafiscal Valido.")
+        
+        try:
+            merged_df = pd.merge(df1, df2, on='CHAVE DE ACESSO', how='inner')
+        except KeyError:
+            st.error("❌ Não é uma combinação de arquivos csv de Notafiscal Valido.")
+            return None
+        return merged_df
+    else:
+        st.error("❌ O arquivo zip deve conter 1 ou 2 arquivos CSV.")
         return None
-    return merged_df
 
 
 st.set_page_config(page_title="Assistente de Elite IA", layout="centered")
@@ -88,78 +107,81 @@ if arquivo_carregado:
         df = carregar_arquivo_zip_to_df(arquivo_carregado)
     else:
         df = pd.read_csv(arquivo_carregado)    
-    
-    if validate_columns(df, REQUIRED_COLUMNS_NOTA_FISCAL):
-      tipo = "Nota Fiscal"
-    elif validate_columns(df, REQUIRED_COLUMNS_CREDITCARD):
-      tipo = "Credit Card"
-    else:
-      tipo = "Dados Comuns"
-      
-    st.success("Arquivo carregado com sucesso!")  
-    st.markdown(f"Arquivo do tipo: {tipo}")
-    
-    llm = ChatOpenAI(
-        model="gpt-4o",
-        temperature=0.1,
-        openai_api_key=OPENAI_API_KEY
-    )
+        
+    if df is None:
+        flash_mensagem("❌ Arquivo inválido.", False)
+    else:    
+        if validate_columns(df, REQUIRED_COLUMNS_NOTA_FISCAL):
+            tipo = "Nota Fiscal"
+        elif validate_columns(df, REQUIRED_COLUMNS_CREDITCARD):
+            tipo = "Credit Card"
+        else:
+            tipo = "Dados Comuns"
 
-    # Ferramentas
-    tools = criar_ferramentas(df)
+            flash_mensagem("✅ Arquivo carregado com sucesso!", True)  
+            st.success(f"Arquivo do tipo: {tipo}")
+            
+            llm = ChatOpenAI(
+                model="gpt-4o",
+                temperature=0.1,
+                openai_api_key=OPENAI_API_KEY
+            )
 
-    # Prompt react
-    df_head = df.head().to_markdown()
+            # Ferramentas
+            tools = criar_ferramentas(df)
 
-    prompt_react_pt = PromptTemplate(
-        input_variables=["input", "agent_scratchpad", "tools", "tool_names"],
-        partial_variables={"df_head": df_head},
-        template="""
-        Você é um assistente que sempre responde em português.
+            # Prompt react
+            df_head = df.head().to_markdown()
 
-        Você tem acesso a um dataframe pandas chamado `df`.
-        Aqui estão as primeiras linhas do DataFrame, obtidas com `df.head().to_markdown()`:
+            prompt_react_pt = PromptTemplate(
+                input_variables=["input", "agent_scratchpad", "tools", "tool_names"],
+                partial_variables={"df_head": df_head},
+                template="""
+                Você é um assistente que sempre responde em português.
 
-        {df_head}
+                Você tem acesso a um dataframe pandas chamado `df`.
+                Aqui estão as primeiras linhas do DataFrame, obtidas com `df.head().to_markdown()`:
 
-        Responda às seguintes perguntas da melhor forma possível.
+                {df_head}
 
-        Para isso, você tem acesso às seguintes ferramentas:
+                Responda às seguintes perguntas da melhor forma possível.
 
-        {tools}
+                Para isso, você tem acesso às seguintes ferramentas:
 
-        Use o seguinte formato:
+                {tools}
 
-        Question: a pergunta de entrada que você deve responder  
-        Thought: você deve sempre pensar no que fazer  
-        Action: a ação a ser tomada, deve ser uma das [{tool_names}]  
-        Action Input: a entrada para a ação  
-        Observation: o resultado da ação  
-        ... (este Thought/Action/Action Input/Observation pode se repetir 5 vezes)
-        Thought: Agora eu sei a resposta final  
-        Final Answer: a resposta final para a pergunta de entrada original.
-        Quando usar a ferramenta_python: formate sua resposta final de forma clara, em lista, com valores separados por vírgulas e duas casas decimais sempre que apresentar números.
+                Use o seguinte formato:
 
-        Comece!
+                Question: a pergunta de entrada que você deve responder  
+                Thought: você deve sempre pensar no que fazer  
+                Action: a ação a ser tomada, deve ser uma das [{tool_names}]  
+                Action Input: a entrada para a ação  
+                Observation: o resultado da ação  
+                ... (este Thought/Action/Action Input/Observation pode se repetir 5 vezes)
+                Thought: Agora eu sei a resposta final  
+                Final Answer: a resposta final para a pergunta de entrada original.
+                Quando usar a ferramenta_python: formate sua resposta final de forma clara, em lista, com valores separados por vírgulas e duas casas decimais sempre que apresentar números.
 
-        Question: {input}  
-        Thought: {agent_scratchpad}"""
-    )
+                Comece!
 
-    
-    # Agente
-    agente = create_react_agent(llm=llm, tools=tools, prompt=prompt_react_pt)
-    orquestrador = AgentExecutor(agent=agente,
-                                tools=tools,
-                                verbose=True,
-                                handle_parsing_errors=True)
-   
-   # PERGUNTA SOBRE OS DADOS
-    st.markdown("---")
-    st.markdown("## 🔎 Perguntas sobre os dados ou peça um 📊 gráfico com base em uma pergunta")
-    
-    pergunta_sobre_dados = st.text_input("Faça uma pergunta sobre os dados (ex: 'Qual é a média do tempo de entrega?' ou 'Crie um gráfico da média de tempo de entrega por clima.')")
-    if st.button("Responder pergunta", key="responder_pergunta_dados"):
-        with st.spinner("Analisando os dados 🦜"):
-            resposta = orquestrador.invoke({"input": pergunta_sobre_dados})
-            st.markdown((resposta["output"]))
+                Question: {input}  
+                Thought: {agent_scratchpad}"""
+            )
+
+            
+            # Agente
+            agente = create_react_agent(llm=llm, tools=tools, prompt=prompt_react_pt)
+            orquestrador = AgentExecutor(agent=agente,
+                                        tools=tools,
+                                        verbose=True,
+                                        handle_parsing_errors=True)
+        
+        # PERGUNTA SOBRE OS DADOS
+            st.markdown("---")
+            st.markdown("## 🔎 Perguntas sobre os dados ou peça um 📊 gráfico com base em uma pergunta")
+            
+            pergunta_sobre_dados = st.text_input("Faça uma pergunta sobre os dados (ex: 'Qual é a média do tempo de entrega?' ou 'Crie um gráfico da média de tempo de entrega por clima.')")
+            if st.button("Responder pergunta", key="responder_pergunta_dados"):
+                with st.spinner("Analisando os dados 🦜"):
+                    resposta = orquestrador.invoke({"input": pergunta_sobre_dados})
+                    st.markdown((resposta["output"]))
