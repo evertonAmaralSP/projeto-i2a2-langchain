@@ -118,84 +118,84 @@ if arquivo_carregado:
         else:
             tipo = "Dados Comuns"
 
-            flash_mensagem("✅ Arquivo carregado com sucesso!", True)  
-            st.markdown(f"## 📄 Arquivo do tipo: {tipo}")
+        flash_mensagem("✅ Arquivo carregado com sucesso!", True)  
+        st.markdown(f"## 📄 Arquivo do tipo: {tipo}")
             
-            llm = ChatOpenAI(
-                model="gpt-4o",
-                temperature=0.1,
-                openai_api_key=OPENAI_API_KEY
-            )
+        llm = ChatOpenAI(
+            model="gpt-4o",
+            temperature=0.1,
+            openai_api_key=OPENAI_API_KEY
+        )
 
-            # Ferramentas
-            tools = criar_ferramentas(df)
+        # Ferramentas
+        tools = criar_ferramentas(df)
 
-            # Prompt react
-            df_head = df.head().to_markdown()
+        # Prompt react
+        df_head = df.head().to_markdown()
 
-            prompt_react_pt = PromptTemplate(
-                input_variables=["input", "agent_scratchpad", "tools", "tool_names"],
-                partial_variables={"df_head": df_head},
-                template="""
-                Você é um assistente que sempre responde em português.
+        prompt_react_pt = PromptTemplate(
+            input_variables=["input", "agent_scratchpad", "tools", "tool_names"],
+            partial_variables={"df_head": df_head},
+            template="""
+            Você é um assistente que sempre responde em português.
 
-                Você tem acesso a um dataframe pandas chamado `df`.
-                Aqui estão as primeiras linhas do DataFrame, obtidas com `df.head().to_markdown()`:
+            Você tem acesso a um dataframe pandas chamado `df`.
+            Aqui estão as primeiras linhas do DataFrame, obtidas com `df.head().to_markdown()`:
 
-                {df_head}
+            {df_head}
 
-                Responda às seguintes perguntas da melhor forma possível.
+            Responda às seguintes perguntas da melhor forma possível.
 
-                Para isso, você tem acesso às seguintes ferramentas:
+            Para isso, você tem acesso às seguintes ferramentas:
 
-                {tools}
+            {tools}
 
-                Use o seguinte formato:
+            Use o seguinte formato:
 
-                Question: a pergunta de entrada que você deve responder  
-                Thought: você deve sempre pensar no que fazer  
-                Action: a ação a ser tomada, deve ser uma das [{tool_names}]  
-                Action Input: a entrada para a ação  
-                Observation: o resultado da ação  
-                ... (este Thought/Action/Action Input/Observation pode se repetir 5 vezes)
-                Thought: Agora eu sei a resposta final  
-                Final Answer: a resposta final para a pergunta de entrada original.
-                Quando usar a ferramenta_python: formate sua resposta final de forma clara, em lista, com valores separados por vírgulas e duas casas decimais sempre que apresentar números.
+            Question: a pergunta de entrada que você deve responder  
+            Thought: você deve sempre pensar no que fazer  
+            Action: a ação a ser tomada, deve ser uma das [{tool_names}]  
+            Action Input: a entrada para a ação  
+            Observation: o resultado da ação  
+            ... (este Thought/Action/Action Input/Observation pode se repetir 5 vezes)
+            Thought: Agora eu sei a resposta final  
+            Final Answer: a resposta final para a pergunta de entrada original.
+            Quando usar a ferramenta_python: formate sua resposta final de forma clara, em lista, com valores separados por vírgulas e duas casas decimais sempre que apresentar números.
 
-                Comece!
+            Comece!
 
-                Question: {input}  
-                Thought: {agent_scratchpad}"""
-            )
+            Question: {input}  
+            Thought: {agent_scratchpad}"""
+        )
 
-            
-            # Agente
-            agente = create_react_agent(llm=llm, tools=tools, prompt=prompt_react_pt)
-            orquestrador = AgentExecutor(agent=agente,
-                                        tools=tools,
-                                        verbose=True,
-                                        handle_parsing_errors=True)
         
-        # PERGUNTA SOBRE OS DADOS
-            st.markdown("---")
-            st.markdown("## 🔎 Perguntas sobre os dados ou peça um 📊 gráfico com base em uma pergunta")
+        # Agente
+        agente = create_react_agent(llm=llm, tools=tools, prompt=prompt_react_pt)
+        orquestrador = AgentExecutor(agent=agente,
+                                    tools=tools,
+                                    verbose=True,
+                                    handle_parsing_errors=True)
+    
+    # PERGUNTA SOBRE OS DADOS
+        st.markdown("---")
+        st.markdown("## 🔎 Perguntas sobre os dados ou peça um 📊 gráfico com base em uma pergunta")
+        
+        
+        with st.form(key="form_pergunta", clear_on_submit=False):
+            pergunta_sobre_dados = st.text_input(
+                "Faça uma pergunta sobre os dados (ex: 'Qual é a média do tempo de entrega?' ou 'Crie um gráfico da média de tempo de entrega por clima.')",
+                placeholder="Digite sua pergunta aqui...",
+                key="input_pergunta"
+            )
             
-            
-            with st.form(key="form_pergunta", clear_on_submit=False):
-                pergunta_sobre_dados = st.text_input(
-                    "Faça uma pergunta sobre os dados (ex: 'Qual é a média do tempo de entrega?' ou 'Crie um gráfico da média de tempo de entrega por clima.')",
-                    placeholder="Digite sua pergunta aqui...",
-                    key="input_pergunta"
-                )
-                
-                col1, col2, col3 = st.columns([1, 1, 4])
-                with col1:
-                    submit_button = st.form_submit_button("Enviar 📨", use_container_width=True)
+            col1, col2, col3 = st.columns([1, 1, 4])
+            with col1:
+                submit_button = st.form_submit_button("Enviar 📨", use_container_width=True)
 
-            if submit_button:
-                if pergunta_sobre_dados.strip():  # Verifica se não está vazio
-                    with st.spinner("Analisando os dados 🦜"):
-                        resposta = orquestrador.invoke({"input": pergunta_sobre_dados})
-                        st.markdown(resposta["output"])
-                else:
-                    st.warning("⚠️ Por favor, digite uma pergunta!")
+        if submit_button:
+            if pergunta_sobre_dados.strip():  # Verifica se não está vazio
+                with st.spinner("Analisando os dados 🦜"):
+                    resposta = orquestrador.invoke({"input": pergunta_sobre_dados})
+                    st.markdown(resposta["output"])
+            else:
+                st.warning("⚠️ Por favor, digite uma pergunta!")
