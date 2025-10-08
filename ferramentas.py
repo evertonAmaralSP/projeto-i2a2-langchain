@@ -327,6 +327,295 @@ def calcular_variabilidade(pergunta: str, df: pd.DataFrame) -> str:
     
     return resposta
 
+@tool
+def analisar_padroes_temporais(pergunta: str, df: pd.DataFrame) -> str:
+    """
+    Utilize esta ferramenta quando o usuário solicitar análise de padrões ou tendências temporais.
+    A instrução pode conter pedidos como:
+    - 'Existem padrões temporais nos dados?'
+    - 'Há tendências ao longo do tempo?'
+    - 'Analise a evolução temporal das variáveis'
+    - 'Mostre padrões de sazonalidade'
+    """
+    
+    # Identificar colunas de data/tempo
+    datetime_cols = df.select_dtypes(include=['datetime64']).columns.tolist()
+    
+    # Tentar converter colunas object que possam ser datas
+    possible_date_cols = []
+    for col in df.select_dtypes(include=['object']).columns:
+        try:
+            pd.to_datetime(df[col], errors='raise')
+            possible_date_cols.append(col)
+        except:
+            pass
+    
+    # Análise temporal
+    analise_temporal = {}
+    
+    if datetime_cols or possible_date_cols:
+        for col in datetime_cols + possible_date_cols:
+            # Converter para datetime se necessário
+            if col in possible_date_cols:
+                df_temp = df.copy()
+                df_temp[col] = pd.to_datetime(df_temp[col])
+            else:
+                df_temp = df
+            
+            # Estatísticas temporais
+            analise_temporal[col] = {
+                "data_minima": str(df_temp[col].min()),
+                "data_maxima": str(df_temp[col].max()),
+                "periodo_total_dias": (df_temp[col].max() - df_temp[col].min()).days,
+                "total_registros": int(df_temp[col].count()),
+                "registros_por_ano": df_temp[col].dt.year.value_counts().to_dict() if hasattr(df_temp[col].dt, 'year') else None,
+                "registros_por_mes": df_temp[col].dt.month.value_counts().to_dict() if hasattr(df_temp[col].dt, 'year') else None,
+                "registros_por_dia_semana": df_temp[col].dt.dayofweek.value_counts().to_dict() if hasattr(df_temp[col].dt, 'dayofweek') else None
+            }
+    
+    # Análise de tendências em variáveis numéricas com índice temporal
+    tendencias_numericas = {}
+    if datetime_cols or possible_date_cols:
+        col_temporal = (datetime_cols + possible_date_cols)[0]
+        for col_num in df.select_dtypes(include=[np.number]).columns[:5]:  # Limitar a 5 colunas
+            # Calcular correlação com tempo (se possível)
+            df_sorted = df.sort_values(col_temporal)
+            tendencias_numericas[col_num] = {
+                "media_primeira_metade": float(df_sorted[col_num].iloc[:len(df_sorted)//2].mean()),
+                "media_segunda_metade": float(df_sorted[col_num].iloc[len(df_sorted)//2:].mean()),
+                "variacao_percentual": f"{((df_sorted[col_num].iloc[len(df_sorted)//2:].mean() - df_sorted[col_num].iloc[:len(df_sorted)//2].mean()) / df_sorted[col_num].iloc[:len(df_sorted)//2].mean() * 100):.2f}%"
+            }
+    
+    # Template de resposta
+    template_resposta = PromptTemplate(
+        template="""
+        Você é um analista de dados especializado em análise de séries temporais e identificação de padrões.
+        
+        Com base na {pergunta} do usuário, apresente uma análise de padrões temporais:
+        
+        1. Um título: ## Análise de Padrões e Tendências Temporais
+        2. Colunas temporais identificadas: {colunas_temporais}
+        3. Colunas que podem ser datas: {colunas_possiveis_datas}
+        4. Análise temporal detalhada: {analise_temporal}
+        5. Tendências em variáveis numéricas ao longo do tempo: {tendencias_numericas}
+        6. Total de colunas temporais encontradas: {total_temporais}
+        7. Escreva um parágrafo sobre os padrões temporais identificados (sazonalidade, tendências)
+        8. Escreva um parágrafo sobre a evolução das variáveis numéricas ao longo do tempo
+        9. Escreva um parágrafo sobre recomendações de análises temporais adicionais
+        10. Sugira visualizações apropriadas (gráficos de linha, séries temporais, decomposição sazonal)
+        
+        IMPORTANTE: Se não houver colunas temporais, informe que não foi possível identificar padrões temporais
+        e sugira análises alternativas.
+        """,
+        input_variables=["pergunta", "colunas_temporais", "colunas_possiveis_datas", 
+                        "analise_temporal", "tendencias_numericas", "total_temporais"]
+    )
+    
+    cadeia = template_resposta | llm | StrOutputParser()
+    
+    resposta = cadeia.invoke({
+        "pergunta": pergunta,
+        "colunas_temporais": ", ".join(datetime_cols) if datetime_cols else "Nenhuma coluna datetime identificada",
+        "colunas_possiveis_datas": ", ".join(possible_date_cols) if possible_date_cols else "Nenhuma coluna possível identificada",
+        "analise_temporal": json.dumps(analise_temporal, indent=2, ensure_ascii=False) if analise_temporal else "Não há dados temporais para analisar",
+        "tendencias_numericas": json.dumps(tendencias_numericas, indent=2, ensure_ascii=False) if tendencias_numericas else "Não foi possível calcular tendências",
+        "total_temporais": len(datetime_cols) + len(possible_date_cols)
+    })
+    
+    return resposta
+
+
+@tool
+def analisar_frequencias(pergunta: str, df: pd.DataFrame) -> str:
+    """
+    Utilize esta ferramenta quando o usuário solicitar análise de frequências e valores mais/menos comuns.
+    A instrução pode conter pedidos como:
+    - 'Quais os valores mais frequentes?'
+    - 'Quais os valores menos frequentes?'
+    - 'Mostre a distribuição de frequência'
+    - 'Quais são os valores raros nos dados?'
+    """
+    
+    # Análise de frequência para variáveis categóricas
+    frequencias_categoricas = {}
+    for col in df.select_dtypes(include=['object', 'category']).columns:
+        value_counts = df[col].value_counts()
+        frequencias_categoricas[col] = {
+            "valores_unicos": int(df[col].nunique()),
+            "top_5_mais_frequentes": value_counts.head(5).to_dict(),
+            "top_5_menos_frequentes": value_counts.tail(5).to_dict(),
+            "valor_mais_comum": str(value_counts.index[0]),
+            "frequencia_mais_comum": int(value_counts.iloc[0]),
+            "percentual_mais_comum": f"{(value_counts.iloc[0] / len(df) * 100):.2f}%",
+            "valores_raros": value_counts[value_counts == 1].index.tolist()[:10]  # Valores que aparecem apenas 1 vez
+        }
+    
+    # Análise de frequência para variáveis numéricas (discretização)
+    frequencias_numericas = {}
+    for col in df.select_dtypes(include=[np.number]).columns:
+        # Criar bins para análise de frequência
+        try:
+            bins = pd.cut(df[col], bins=10)
+            value_counts = bins.value_counts().sort_values(ascending=False)
+            
+            frequencias_numericas[col] = {
+                "valores_unicos": int(df[col].nunique()),
+                "faixa_mais_frequente": str(value_counts.index[0]),
+                "frequencia_faixa": int(value_counts.iloc[0]),
+                "valor_mais_comum_exato": float(df[col].mode().iloc[0]) if not df[col].mode().empty else None,
+                "frequencia_valor_mais_comum": int((df[col] == df[col].mode().iloc[0]).sum()) if not df[col].mode().empty else 0
+            }
+        except:
+            frequencias_numericas[col] = {"erro": "Não foi possível criar bins para esta variável"}
+    
+    # Análise de combinações frequentes (top pares de valores categóricos)
+    combinacoes_frequentes = {}
+    cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    if len(cat_cols) >= 2:
+        # Pegar primeiras 2 colunas categóricas
+        col1, col2 = cat_cols[0], cat_cols[1]
+        combinacoes = df.groupby([col1, col2]).size().sort_values(ascending=False).head(5)
+        combinacoes_frequentes[f"{col1}_x_{col2}"] = {
+            str(k): int(v) for k, v in combinacoes.items()
+        }
+    
+    # Template de resposta
+    template_resposta = PromptTemplate(
+        template="""
+        Você é um analista de dados especializado em análise de frequências e identificação de padrões.
+        
+        Com base na {pergunta} do usuário, apresente uma análise de frequências:
+        
+        1. Um título: ## Análise de Frequências e Valores Mais/Menos Comuns
+        2. Total de variáveis categóricas analisadas: {total_categoricas}
+        3. Frequências de variáveis categóricas (mais e menos frequentes): {frequencias_categoricas}
+        4. Total de variáveis numéricas analisadas: {total_numericas}
+        5. Frequências de variáveis numéricas (por faixas): {frequencias_numericas}
+        6. Combinações mais frequentes entre variáveis: {combinacoes_frequentes}
+        7. Escreva um parágrafo destacando os valores mais frequentes e seu significado
+        8. Escreva um parágrafo sobre valores raros ou incomuns encontrados
+        9. Escreva um parágrafo sobre a concentração dos dados (se há dominância de certos valores)
+        10. Sugira análises adicionais baseadas nos padrões de frequência identificados
+        """,
+        input_variables=["pergunta", "total_categoricas", "frequencias_categoricas", 
+                        "total_numericas", "frequencias_numericas", "combinacoes_frequentes"]
+    )
+    
+    cadeia = template_resposta | llm | StrOutputParser()
+    
+    resposta = cadeia.invoke({
+        "pergunta": pergunta,
+        "total_categoricas": len(df.select_dtypes(include=['object', 'category']).columns),
+        "frequencias_categoricas": json.dumps(frequencias_categoricas, indent=2, ensure_ascii=False),
+        "total_numericas": len(df.select_dtypes(include=[np.number]).columns),
+        "frequencias_numericas": json.dumps(frequencias_numericas, indent=2, ensure_ascii=False),
+        "combinacoes_frequentes": json.dumps(combinacoes_frequentes, indent=2, ensure_ascii=False) if combinacoes_frequentes else "Não há combinações para analisar"
+    })
+    
+    return resposta
+
+
+@tool
+def identificar_agrupamentos(pergunta: str, df: pd.DataFrame) -> str:
+    """
+    Utilize esta ferramenta quando o usuário solicitar identificação de clusters ou agrupamentos.
+    A instrução pode conter pedidos como:
+    - 'Existem agrupamentos nos dados?'
+    - 'Identifique clusters'
+    - 'Há padrões de agrupamento?'
+    - 'Mostre grupos similares nos dados'
+    """
+    
+    # Análise de agrupamentos naturais usando estatísticas
+    from scipy import stats
+    
+    agrupamentos_categoricos = {}
+    # Agrupar por variáveis categóricas e analisar variáveis numéricas
+    for cat_col in df.select_dtypes(include=['object', 'category']).columns[:3]:  # Limitar a 3 colunas
+        grupos_stats = {}
+        for num_col in df.select_dtypes(include=[np.number]).columns[:3]:  # Limitar a 3 colunas numéricas
+            grouped = df.groupby(cat_col)[num_col]
+            grupos_stats[num_col] = {
+                "media_por_grupo": grouped.mean().to_dict(),
+                "mediana_por_grupo": grouped.median().to_dict(),
+                "desvio_padrao_por_grupo": grouped.std().to_dict(),
+                "total_grupos": int(df[cat_col].nunique())
+            }
+        
+        agrupamentos_categoricos[cat_col] = grupos_stats
+    
+    # Análise de correlação entre variáveis numéricas (indica agrupamentos)
+    numeric_df = df.select_dtypes(include=[np.number])
+    correlacoes = {}
+    if len(numeric_df.columns) >= 2:
+        corr_matrix = numeric_df.corr()
+        # Pegar pares com alta correlação (>0.7 ou <-0.7)
+        high_corr = []
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                corr_val = corr_matrix.iloc[i, j]
+                if abs(corr_val) > 0.7:
+                    high_corr.append({
+                        "variavel_1": corr_matrix.columns[i],
+                        "variavel_2": corr_matrix.columns[j],
+                        "correlacao": float(corr_val)
+                    })
+        correlacoes["pares_alta_correlacao"] = high_corr[:10]  # Top 10
+    
+    # Análise de outliers por grupo (usando IQR)
+    outliers_por_grupo = {}
+    for cat_col in df.select_dtypes(include=['object', 'category']).columns[:2]:
+        for num_col in df.select_dtypes(include=[np.number]).columns[:2]:
+            grupos = df.groupby(cat_col)[num_col]
+            outliers_info = {}
+            for grupo_nome, grupo_data in grupos:
+                Q1 = grupo_data.quantile(0.25)
+                Q3 = grupo_data.quantile(0.75)
+                IQR = Q3 - Q1
+                outliers = grupo_data[(grupo_data < Q1 - 1.5*IQR) | (grupo_data > Q3 + 1.5*IQR)]
+                outliers_info[str(grupo_nome)] = {
+                    "quantidade_outliers": len(outliers),
+                    "percentual_outliers": f"{(len(outliers) / len(grupo_data) * 100):.2f}%"
+                }
+            outliers_por_grupo[f"{cat_col}_{num_col}"] = outliers_info
+    
+    # Template de resposta
+    template_resposta = PromptTemplate(
+        template="""
+        Você é um analista de dados especializado em identificação de clusters e padrões de agrupamento.
+        
+        Com base na {pergunta} do usuário, apresente uma análise de agrupamentos:
+        
+        1. Um título: ## Identificação de Agrupamentos e Clusters nos Dados
+        2. Agrupamentos naturais por variáveis categóricas: {agrupamentos_categoricos}
+        3. Pares de variáveis com alta correlação (potenciais clusters): {correlacoes}
+        4. Análise de outliers por grupo: {outliers_por_grupo}
+        5. Total de variáveis categóricas usadas para agrupamento: {total_cat_cols}
+        6. Total de variáveis numéricas analisadas: {total_num_cols}
+        7. Escreva um parágrafo descrevendo os agrupamentos naturais identificados
+        8. Escreva um parágrafo sobre diferenças significativas entre grupos
+        9. Escreva um parágrafo sobre variáveis que têm forte relação entre si (clusters de variáveis)
+        10. Sugira técnicas avançadas de clustering (K-means, DBSCAN, hierárquico) que poderiam ser aplicadas
+        11. Recomende visualizações para explorar clusters (scatter plots, dendrogramas, heatmaps)
+        
+        IMPORTANTE: Se não houver variáveis categóricas, sugira análises de clustering não supervisionado.
+        """,
+        input_variables=["pergunta", "agrupamentos_categoricos", "correlacoes", "outliers_por_grupo",
+                        "total_cat_cols", "total_num_cols"]
+    )
+    
+    cadeia = template_resposta | llm | StrOutputParser()
+    
+    resposta = cadeia.invoke({
+        "pergunta": pergunta,
+        "agrupamentos_categoricos": json.dumps(agrupamentos_categoricos, indent=2, ensure_ascii=False),
+        "correlacoes": json.dumps(correlacoes, indent=2, ensure_ascii=False),
+        "outliers_por_grupo": json.dumps(outliers_por_grupo, indent=2, ensure_ascii=False),
+        "total_cat_cols": len(df.select_dtypes(include=['object', 'category']).columns),
+        "total_num_cols": len(df.select_dtypes(include=[np.number]).columns)
+    })
+    
+    return resposta
 
 @tool
 def informacoes_genericas_do_dataframe(pergunta: str, df: pd.DataFrame) -> str:
@@ -685,6 +974,39 @@ def criar_ferramentas(df):
         'dispersão', 'variância', 'desvio padrão', 'std', 'coeficiente de variação', 'CV', 'desvio médio absoluto', entre outros.""",
         return_direct=True
     )
+    
+    ferramentas_padroes_temporais = Tool(
+        name="Analisar Padrões Temporais",
+        func=lambda pergunta: analisar_padroes_temporais.run({"pergunta": pergunta, "df": df}),
+        description="""Utilize esta ferramenta quando o usuário solicitar análise de padrões ou tendências temporais.
+        A instrução pode conter pedidos como: 'Existem padrões temporais?', 'Há tendências ao longo do tempo?',
+        'Analise a evolução temporal', 'Mostre sazonalidade', 'Como os dados variam no tempo?', 'Identifique tendências',
+        'Análise de série temporal'. Palavras-chave comuns que indicam o uso desta ferramenta incluem: 'temporal', 'tempo',
+        'tendência', 'evolução', 'sazonalidade', 'ao longo do tempo', 'histórico', 'cronológico', entre outros.""",
+        return_direct=True
+    )
+    
+    ferramentas_frequencias = Tool(
+        name="Analisar Frequências",
+        func=lambda pergunta: analisar_frequencias.run({"pergunta": pergunta, "df": df}),
+        description="""Utilize esta ferramenta quando o usuário solicitar análise de frequências e valores comuns/raros.
+        A instrução pode conter pedidos como: 'Quais os valores mais frequentes?', 'Quais os valores menos frequentes?',
+        'Mostre a distribuição de frequência', 'Quais são os valores raros?', 'Valores mais comuns', 'Top valores',
+        'Valores únicos'. Palavras-chave comuns que indicam o uso desta ferramenta incluem: 'frequente', 'frequência',
+        'comum', 'raro', 'top valores', 'mais aparecem', 'menos aparecem', 'value_counts', 'contagem', entre outros.""",
+        return_direct=True
+    )
+    
+    ferramentas_agrupamentos = Tool(
+        name="Identificar Agrupamentos",
+        func=lambda pergunta: identificar_agrupamentos.run({"pergunta": pergunta, "df": df}),
+        description="""Utilize esta ferramenta quando o usuário solicitar identificação de clusters ou agrupamentos.
+        A instrução pode conter pedidos como: 'Existem agrupamentos?', 'Identifique clusters', 'Há padrões de agrupamento?',
+        'Mostre grupos similares', 'Análise de clusters', 'Segmentação dos dados', 'Grupos naturais'.
+        Palavras-chave comuns que indicam o uso desta ferramenta incluem: 'cluster', 'agrupamento', 'grupo', 'segmento',
+        'similar', 'padrão', 'correlação entre grupos', 'diferenças entre grupos', entre outros.""",
+        return_direct=True
+    )
 
     return [
         ferramenta_informacoes_dataframe, 
@@ -696,5 +1018,8 @@ def criar_ferramentas(df):
         ferramenta_distribuicao,
         ferramenta_intervalo,
         ferramenta_tendencia_central,
-        ferramenta_variabilidade
+        ferramenta_variabilidade,
+        ferramentas_padroes_temporais,
+        ferramentas_frequencias,
+        ferramentas_agrupamentos
     ]  
